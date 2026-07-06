@@ -1389,19 +1389,44 @@ function updateCoordUI() {
 // 戻ったとき元のA/B地点に固定されたままだった。切替直前の「実際に見ている地点」
 // （SPLIT側なら各パネルの中心、OVERLAY側ならmapBase/mapOverlayの中心）を
 // 新しい基準地点として引き継ぎ、切替後すぐにその地点で重ね合わせ直せるようにする。
-function carryPointsAcrossViewSwitch(goingToSplit) {
-  if (!S.pointA || !S.pointB) return; // 地点未設定なら引き継ぐものがない
+// SPLITの各パネルは画面幅の半分、OVERLAYのmapBase/mapOverlayは全幅と、
+// Leafletの内部ピクセル原点の丸め込み基準となるコンテナ幅がモードごとに異なる。
+// そのため実際には動かしていなくても getCenter() の値はモード間で毎回わずかに
+// ぶれる（ズームが低いほど1pxあたりの実距離が大きくなるため、度数換算では
+// 数m〜数十m相当になりうる）。これを都度地点として書き戻すと、切替を繰り返す
+// たびに誤差が積み重なってしまう。度数の固定閾値ではズーム依存の誤差幅を
+// 正しく判定できないため、現在のズームでのピクセル距離で「実質移動」を判定する。
+const NEGLIGIBLE_PX = 2; // これ未満のピクセル差は「動いていない」とみなす
+function movedMeaningfully(map, a, b, zoom) {
+  return map.project(a, zoom).distanceTo(map.project(b, zoom)) > NEGLIGIBLE_PX;
+}
+// 切替前（表示先はまだdisplay:noneのまま）に「今見ている地点」を読み取る。
+// この時点では移動元の地図はまだ表示中でサイズが正しいため、ここで読むのが安全。
+function captureViewSwitchCarry(goingToSplit) {
+  if (!S.pointA || !S.pointB) return null;
   const srcA = goingToSplit ? mapBase : mapSA;
   const srcB = goingToSplit ? mapOverlay : mapSB;
   const cA = srcA.getCenter(), cB = srcB.getCenter();
   const zoomA = srcA.getZoom();
+  const zoomBcur = srcB.getZoom();
 
+  const movedA = movedMeaningfully(srcA, cA, L.latLng(S.pointA.lat, S.pointA.lng), zoomA);
+  const movedB = movedMeaningfully(srcB, cB, L.latLng(S.pointB.lat, S.pointB.lng), zoomBcur);
+  if (!movedA && !movedB) return null; // 実質移動なし：丸め誤差の書き戻しによる蓄積を防ぐ
+
+  return { cA, cB, zoomA };
+}
+
+// 表示先の地図が可視化されサイズが確定した後に、引き継いだ地点を書き戻す。
+// display:noneの間にキャッシュされたサイズ(0x0)のまま書き込むと中心地点が
+// 狂うため、必ず表示切替＋invalidateSize()の後に呼び出すこと。
+function applyViewSwitchCarry(carry) {
+  if (!carry) return;
+  const { cA, cB, zoomA } = carry;
   const newA = { lat: cA.lat, lng: cA.lng, name: `${cA.lat.toFixed(4)},${cA.lng.toFixed(4)}`, elev: null };
   const newB = { lat: cB.lat, lng: cB.lng, name: `${cB.lat.toFixed(4)},${cB.lng.toFixed(4)}`, elev: null };
 
   // movemap=falseにしてsetPoint自身には地図を動かさせず、ズームも含めここで明示的に制御する。
-  // 切替直前は行き先の地図(display:noneのことがある)にアニメーション付きズームをかけると
-  // ズームが正しく反映されないことがあるため、必ずanimate:falseで即時反映する。
   setPoint('a', newA, false);
   mapBase.setView([newA.lat, newA.lng], zoomA, {animate:false});
   mapSA.setView([newA.lat, newA.lng], zoomA, {animate:false});
@@ -1425,7 +1450,9 @@ function carryPointsAcrossViewSwitch(goingToSplit) {
 }
 function toggleViewMode() {
   const goingToSplit = S.viewMode === 'overlay';
-  carryPointsAcrossViewSwitch(goingToSplit);
+  // 表示先がまだ非表示のうちに、移動元の「今見ている地点」を読み取っておく
+  const carry = captureViewSwitchCarry(goingToSplit);
+
   S.viewMode = goingToSplit ? 'split' : 'overlay';
   const btn = document.getElementById('view-toggle-btn');
   const mapArea  = document.getElementById('map-area');
@@ -1441,6 +1468,10 @@ function toggleViewMode() {
     loverlay.style.display = '';
     miniWrap.style.display = '';
     btn.textContent = '⇔ SPLIT VIEW';
+    // display:noneの間にキャッシュされたサイズ(0x0)を、表示直後に同期的に補正する
+    // （このあとの地点書き戻しが正しいサイズを前提にできるようにするため）
+    mapBase.invalidateSize();
+    mapOverlay.invalidateSize();
     setTimeout(() => { mapBase.invalidateSize(); mapOverlay.invalidateSize(); }, 50);
   } else {
     // SPLITへ切替時はドラッグ調整モードをOFFに戻す（OVERLAY専用機能のため）
@@ -1451,8 +1482,13 @@ function toggleViewMode() {
     loverlay.style.display = 'none';
     miniWrap.style.display = 'none';
     btn.textContent = '⊕ OVERLAY VIEW';
+    mapSA.invalidateSize();
+    mapSB.invalidateSize();
     setTimeout(() => { mapSA.invalidateSize(); mapSB.invalidateSize(); }, 50);
   }
+
+  // 表示先のサイズが確定した状態で、読み取っておいた地点を書き戻す
+  applyViewSwitchCarry(carry);
 }
 
 // ===== OPACITY =====
