@@ -235,15 +235,6 @@ body {
 }
 #drawer-pin-btn:hover { color: var(--text); }
 #drawer-pin-btn.pinned { color: var(--accent); }
-#drawer-toggle {
-  position: absolute; top: 8px; right: 8px; z-index: 110;
-  background: var(--panel-bg2); border: 1px solid var(--border);
-  color: var(--dim); width: 28px; height: 28px;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; font-size: 14px; border-radius: 2px;
-  transition: all 0.15s;
-}
-#drawer.closed #drawer-toggle { right: calc(-1 * var(--drawer-w) - 36px); }
 /* [B]ラベルをミニマップ下（左側）に固定 */
 #label-overlay {
   top: 168px !important; left: 8px !important; right: auto !important;
@@ -837,6 +828,15 @@ input[type="checkbox"] { accent-color: var(--accent); }
             <button class="btn amber" style="flex:1" onclick="saveHome()">HOME 保存</button>
             <button class="btn" style="flex:1" onclick="loadHome()">HOME 復元</button>
           </div>
+
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+            <div class="row"><span class="row-label" style="font-size:10px;letter-spacing:2px">B地図の手動位置調整（オーバーレイのみ）</span></div>
+            <div style="display:flex;gap:6px">
+              <button class="btn" id="offset-adjust-btn" style="flex:1" onclick="toggleOffsetAdjust()">🖐 ドラッグ調整 OFF</button>
+              <button class="btn" style="flex:1" onclick="resetManualOffset()">⟲ オフセット解除</button>
+            </div>
+            <div style="margin-top:4px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim)" id="offset-status">オフセット: なし</div>
+          </div>
         </div>
       </div>
 
@@ -882,6 +882,15 @@ input[type="checkbox"] { accent-color: var(--accent); }
         </div>
       </div>
 
+      <!-- エクスポート -->
+      <div class="dsec">
+        <div class="dsec-title" onclick="toggleSection(this)">エクスポート</div>
+        <div class="dsec-body">
+          <button class="btn full green" onclick="exportPNG()">📷 現在の比較状態をPNG出力</button>
+          <div style="margin-top:4px;font-size:10px;color:var(--dim)">現在の表示モード（OVERLAY/SPLIT）の地図表示部分を画像として保存します</div>
+        </div>
+      </div>
+
     </div><!-- /drawer-body -->
   </div><!-- /drawer -->
 </main>
@@ -894,6 +903,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 // ===== TILES =====
 const TILES = {
@@ -915,6 +925,10 @@ const S = {
   overlayOpacity: 0.6,
   correctionApplied: false,
   drawerPinned: false,
+  offsetAdjustMode: false,
+  // ドラッグによる手動オフセット。ズームに依らず同じ見た目のズレを保つため
+  // 「zoom0時点でのワールドピクセル」単位で保持し、適用時に 2^zoom 倍する。
+  manualOffset: { x0: 0, y0: 0 },
 };
 
 function loadSavedState() {
@@ -957,23 +971,27 @@ function initMaps() {
   // 「AをBと同一視してBのタイルを張る」= mapOverlay の center は常に mapBase と同じ。
   mapBase    = L.map('map-base',       {zoomControl:false}).setView(defA, 12);
   mapOverlay = L.map('map-overlay-el', {zoomControl:false}).setView(defA, 12);
-  tileBase    = L.tileLayer(TILES.color, {attribution:ATTR, maxZoom:18}).addTo(mapBase);
-  tileOverlay = L.tileLayer(TILES.pale,  {attribution:ATTR, maxZoom:18}).addTo(mapOverlay);
+  // crossOrigin:true — PNG出力(html2canvas)でタイル画像がcanvasを汚染しないようにする（地理院タイルはCORS許可済み）
+  tileBase    = L.tileLayer(TILES.color, {attribution:ATTR, maxZoom:18, crossOrigin:true}).addTo(mapBase);
+  tileOverlay = L.tileLayer(TILES.pale,  {attribution:ATTR, maxZoom:18, crossOrigin:true}).addTo(mapOverlay);
   // 透明度は CSS opacity でコンテナ全体に適用（Leafletのbg透過と組み合わせ）
   document.getElementById('map-overlay-el').style.opacity = S.overlayOpacity;
+  // オーバーレイの素の Leaflet ドラッグは常時無効化。
+  // 「B手動オフセット調整」ON時のみ dragstart/dragend を使って独自にオフセットへ反映する（toggleOffsetAdjustで有効化）。
+  mapOverlay.dragging.disable();
 
   // SPLIT mode maps
   mapSA = L.map('map-sa', {zoomControl:false}).setView(defA, 12);
   mapSB = L.map('map-sb', {zoomControl:false}).setView(defB, 12);
-  tileSA = L.tileLayer(TILES.color, {attribution:ATTR, maxZoom:18}).addTo(mapSA);
-  tileSB = L.tileLayer(TILES.pale,  {attribution:ATTR, maxZoom:18}).addTo(mapSB);
+  tileSA = L.tileLayer(TILES.color, {attribution:ATTR, maxZoom:18, crossOrigin:true}).addTo(mapSA);
+  tileSB = L.tileLayer(TILES.pale,  {attribution:ATTR, maxZoom:18, crossOrigin:true}).addTo(mapSB);
 
   // 全タイル初期化後にビジュアライズ設定を適用
   applyVizFilter();
 
   // Minimap（オーバーレイと縮尺・中心点を同期するプレビュー）
   minimapInst = L.map('minimap', {zoomControl:false, attributionControl:false, dragging:false, touchZoom:false, scrollWheelZoom:false, doubleClickZoom:false}).setView(defB, 12);
-  minimapTile = L.tileLayer(TILES.pale, {maxZoom:18}).addTo(minimapInst);
+  minimapTile = L.tileLayer(TILES.pale, {maxZoom:18, crossOrigin:true}).addTo(minimapInst);
   // クリックでA/Bレイヤを入れ替え（flashMsgはswapPoints内で発火）
   minimapInst.on('click', () => swapPoints());
 
@@ -989,13 +1007,24 @@ function initMaps() {
   });
   // ベース地図クリック → A設定
   mapBase.on('click', e => onMapClick(e.latlng.lat, e.latlng.lng, 'a'));
-  // オーバーレイ地図クリック → B設定（オーバーレイ座標系≠実座標なので変換）
-  mapOverlay.on('click', e => {
-    // オーバーレイは mapBase と同じピクセル空間を共有しているため、
-    // クリック座標をそのまま B の「ピン位置」として扱い、実際の B 座標は別管理
-    // → ここではオーバーレイ地図上のクリックをベース座標として A 設定に使う
-    // B の座標設定はジオコーダ検索から行う（クリックはAのみ）
-    onMapClick(e.latlng.lat, e.latlng.lng, 'a');
+  // B地点はジオコーダ検索で設定する（オーバーレイ地図はA基準でクリック座標系がズレるため、クリックでのB設定は行わない）
+
+  // 手動オフセット調整: ドラッグ開始/終了時の中心ズレをピクセル差分としてmanualOffsetへ加算する。
+  // （Leaflet標準のドラッグ・慣性をそのまま利用し、自前でマウス座標を追うより頑健にする）
+  let offsetDragStartProj = null;
+  mapOverlay.on('dragstart', () => {
+    offsetDragStartProj = mapOverlay.project(mapOverlay.getCenter(), mapOverlay.getZoom());
+  });
+  mapOverlay.on('dragend', () => {
+    if (!offsetDragStartProj) return;
+    const z = mapOverlay.getZoom();
+    const endProj = mapOverlay.project(mapOverlay.getCenter(), z);
+    const scale = Math.pow(2, z);
+    S.manualOffset.x0 += (endProj.x - offsetDragStartProj.x) / scale;
+    S.manualOffset.y0 += (endProj.y - offsetDragStartProj.y) / scale;
+    offsetDragStartProj = null;
+    syncOverlayToBase();
+    updateOffsetStatusUI();
   });
   // スプリットモード: ズームのみ連動、パンは独立
   let splitSyncing = false;
@@ -1029,6 +1058,10 @@ function initMaps() {
 function syncOverlayToBase() {
   const z = mapBase.getZoom();
   const corrZ = S.correctionApplied ? z + Math.log2(getDF()) : z;
+  // 手動オフセットはzoom0時点のワールドピクセル単位で保持しているので、現在のzoomに合わせてスケールする
+  const scale = Math.pow(2, corrZ);
+  const manX = S.manualOffset.x0 * scale;
+  const manY = S.manualOffset.y0 * scale;
 
   if (!S.pointA || !S.pointB) {
     // A/B未設定時はベースと同じ中心を表示（初期状態）
@@ -1042,9 +1075,9 @@ function syncOverlayToBase() {
   const dx = aCur.x - aRef.x;
   const dy = aCur.y - aRef.y;
 
-  // B側: B基準点に同じオフセットを加算した地点をオーバーレイの中心にする
+  // B側: B基準点に同じオフセット＋手動調整オフセットを加算した地点をオーバーレイの中心にする
   const bRef = mapOverlay.project(L.latLng(S.pointB.lat, S.pointB.lng), corrZ);
-  const newCenter = mapOverlay.unproject(L.point(bRef.x + dx, bRef.y + dy), corrZ);
+  const newCenter = mapOverlay.unproject(L.point(bRef.x + dx + manX, bRef.y + dy + manY), corrZ);
 
   mapOverlay.setView(newCenter, corrZ, {animate: false});
   // ミニマップをオーバーレイと同じ中心・ズームで同期（OVERLAY PREVIEWとして機能）
@@ -1072,6 +1105,9 @@ function onMapClick(lat, lng, which) {
 }
 
 function setPoint(which, point, movemap=true) {
+  // A/Bどちらかが変われば以前の手動オフセットは無意味になるためリセットする
+  S.manualOffset = { x0: 0, y0: 0 };
+  updateOffsetStatusUI();
   if (which === 'a') {
     S.pointA = point;
     placeMarkerA(point.lat, point.lng);
@@ -1114,6 +1150,8 @@ function swapPoints() {
   const tmp = S.pointA;
   S.pointA = S.pointB;
   S.pointB = tmp;
+  S.manualOffset = { x0: 0, y0: 0 };
+  updateOffsetStatusUI();
 
   // Aマーカー・マップ更新
   if (S.pointA) {
@@ -1188,6 +1226,8 @@ function toggleViewMode() {
     btn.textContent = '⇔ SPLIT VIEW';
     setTimeout(() => { mapBase.invalidateSize(); mapOverlay.invalidateSize(); }, 50);
   } else {
+    // SPLITへ切替時はドラッグ調整モードをOFFに戻す（OVERLAY専用機能のため）
+    if (S.offsetAdjustMode) disableOffsetAdjust();
     mapArea.style.display = 'none';
     splitArea.style.display = '';
     lbase.style.display = 'none';
@@ -1262,6 +1302,7 @@ function getDF() {
 function updateStatus() {
   const zoom = S.viewMode === 'overlay' ? mapBase.getZoom() : mapSA.getZoom();
   document.getElementById('ts-zoom').textContent = zoom.toFixed(1);
+  updateOffsetStatusUI();
 
   if (S.pointA) { document.getElementById('ts-lat-a').textContent = S.pointA.lat.toFixed(2)+'°'; document.getElementById('lg-lat-a').textContent = S.pointA.lat.toFixed(3)+'° N'; }
   if (S.pointB) { document.getElementById('ts-lat-b').textContent = S.pointB.lat.toFixed(2)+'°'; document.getElementById('lg-lat-b').textContent = S.pointB.lat.toFixed(3)+'° N'; }
@@ -1313,6 +1354,45 @@ function syncZoom() {
   else mapSB.setZoom(mapSA.getZoom());
   setTimeout(updateStatus, 100);
   flashMsg('ZOOM SYNCED');
+}
+
+// ===== 手動オフセット調整（Bをドラッグでずらす） =====
+function toggleOffsetAdjust() {
+  if (S.viewMode !== 'overlay') { flashMsg('OVERLAY VIEWで使用してください'); return; }
+  if (S.offsetAdjustMode) disableOffsetAdjust();
+  else enableOffsetAdjust();
+}
+function enableOffsetAdjust() {
+  S.offsetAdjustMode = true;
+  document.getElementById('map-overlay-el').classList.add('interactive');
+  mapOverlay.dragging.enable();
+  const btn = document.getElementById('offset-adjust-btn');
+  btn.textContent = '🖐 ドラッグ調整 ON';
+  btn.classList.add('primary');
+  flashMsg('ドラッグでB地図をずらせます');
+}
+// viewMode切替時にも直接呼べるよう、toggleOffsetAdjustのOVERLAY限定ガードを経由しない解除処理を分離
+function disableOffsetAdjust() {
+  S.offsetAdjustMode = false;
+  mapOverlay.dragging.disable();
+  document.getElementById('map-overlay-el').classList.remove('interactive');
+  const btn = document.getElementById('offset-adjust-btn');
+  btn.textContent = '🖐 ドラッグ調整 OFF';
+  btn.classList.remove('primary');
+}
+function resetManualOffset() {
+  S.manualOffset = { x0: 0, y0: 0 };
+  syncOverlayToBase();
+  updateOffsetStatusUI();
+  flashMsg('オフセット解除');
+}
+function updateOffsetStatusUI() {
+  const el = document.getElementById('offset-status');
+  if (!el) return;
+  const { x0, y0 } = S.manualOffset;
+  el.textContent = (Math.abs(x0) < 0.01 && Math.abs(y0) < 0.01)
+    ? 'オフセット: なし'
+    : `オフセット: 調整済み (現在ズームで約 ${Math.round(x0*Math.pow(2,mapOverlay.getZoom()))}, ${Math.round(y0*Math.pow(2,mapOverlay.getZoom()))}px)`;
 }
 
 // ===== GEOCODER =====
@@ -1443,6 +1523,9 @@ function resetDisplayOnly() {
   document.querySelectorAll('.viz-thumb').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-mode="standard"]').classList.add('active');
   applyVizFilter();
+  // 比較解析モードの選択もカスタムに戻す（設定だけリセットしてラベルがズレるのを防ぐ）
+  document.querySelectorAll('.analysis-row').forEach(r => r.classList.remove('active'));
+  document.querySelector('.analysis-row').classList.add('active');
   flashMsg('DISPLAY RESET');
 }
 
@@ -1570,6 +1653,25 @@ function updatePinBtn() {
     btn.textContent = '📍';
     btn.title = '常時表示に固定';
     btn.classList.remove('pinned');
+  }
+}
+
+// ===== PNG出力 =====
+async function exportPNG() {
+  if (typeof html2canvas === 'undefined') { flashMsg('PNG出力ライブラリ未読込'); return; }
+  const target = document.getElementById(S.viewMode === 'overlay' ? 'map-area' : 'split-area');
+  flashMsg('PNG生成中…');
+  try {
+    const canvas = await html2canvas(target, { useCORS: true, backgroundColor: '#0d1117', logging: false });
+    const link = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    link.download = `geocompass_${ts}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    flashMsg('PNG出力 完了');
+  } catch (e) {
+    console.error('exportPNG failed', e);
+    flashMsg('PNG出力エラー');
   }
 }
 
