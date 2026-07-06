@@ -1385,8 +1385,48 @@ function updateCoordUI() {
 }
 
 // ===== VIEW MODE =====
+// SPLITでは地点A/Bを個別にパン/ズームできるのが利点だが、そのままではOVERLAYに
+// 戻ったとき元のA/B地点に固定されたままだった。切替直前の「実際に見ている地点」
+// （SPLIT側なら各パネルの中心、OVERLAY側ならmapBase/mapOverlayの中心）を
+// 新しい基準地点として引き継ぎ、切替後すぐにその地点で重ね合わせ直せるようにする。
+function carryPointsAcrossViewSwitch(goingToSplit) {
+  if (!S.pointA || !S.pointB) return; // 地点未設定なら引き継ぐものがない
+  const srcA = goingToSplit ? mapBase : mapSA;
+  const srcB = goingToSplit ? mapOverlay : mapSB;
+  const cA = srcA.getCenter(), cB = srcB.getCenter();
+  const zoomA = srcA.getZoom();
+
+  const newA = { lat: cA.lat, lng: cA.lng, name: `${cA.lat.toFixed(4)},${cA.lng.toFixed(4)}`, elev: null };
+  const newB = { lat: cB.lat, lng: cB.lng, name: `${cB.lat.toFixed(4)},${cB.lng.toFixed(4)}`, elev: null };
+
+  // movemap=falseにしてsetPoint自身には地図を動かさせず、ズームも含めここで明示的に制御する。
+  // 切替直前は行き先の地図(display:noneのことがある)にアニメーション付きズームをかけると
+  // ズームが正しく反映されないことがあるため、必ずanimate:falseで即時反映する。
+  setPoint('a', newA, false);
+  mapBase.setView([newA.lat, newA.lng], zoomA, {animate:false});
+  mapSA.setView([newA.lat, newA.lng], zoomA, {animate:false});
+
+  // A側の中心・ズームが確定した状態でB側を反映する
+  // （updateOverlayCenter/syncOverlayToBaseはmapBaseの現在の中心・ズームを参照するため）
+  setPoint('b', newB, false);
+  const zoomB = S.correctionApplied ? zoomA + Math.log2(getDF()) : zoomA;
+  mapSB.setView([newB.lat, newB.lng], zoomB, {animate:false});
+
+  document.getElementById('search-a').value = newA.name;
+  document.getElementById('search-b').value = newB.name;
+
+  // 標高は非同期取得して後から反映（地図の再配置自体は即時に行う）
+  Promise.all([fetchElev(newA.lat, newA.lng), fetchElev(newB.lat, newB.lng)]).then(([elevA, elevB]) => {
+    if (S.pointA === newA) S.pointA.elev = elevA;
+    if (S.pointB === newB) S.pointB.elev = elevB;
+    updateCoordUI();
+    persistState();
+  });
+}
 function toggleViewMode() {
-  S.viewMode = S.viewMode === 'overlay' ? 'split' : 'overlay';
+  const goingToSplit = S.viewMode === 'overlay';
+  carryPointsAcrossViewSwitch(goingToSplit);
+  S.viewMode = goingToSplit ? 'split' : 'overlay';
   const btn = document.getElementById('view-toggle-btn');
   const mapArea  = document.getElementById('map-area');
   const splitArea = document.getElementById('split-area');
