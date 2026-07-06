@@ -2,3 +2,8 @@ Thumbs.db
 .DS_Store
 *.log
 node_modules/
+__pycache__/
+*.pyc
+/stealth_hazard/out/
+/stealth_hazard/examples/out/
+/stealth_hazard/examples/data/
