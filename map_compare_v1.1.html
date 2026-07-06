@@ -1178,9 +1178,16 @@ function initMaps() {
 
   // Events
   // mapBase 移動 → mapOverlay を同じ center/zoom に同期（センタリング維持）
+  // ドラッグ/ズーム中は'move'/'zoom'が連続発火するため、その都度ミニマップまで
+  // setViewすると新しいタイル取得が追いつかず背景色（黒）が見えてしまう。
+  // ドラッグ中はメインのオーバーレイだけ追従させ、ミニマップは操作が確定する
+  // 'moveend'/'zoomend'でまとめて追いつかせる。
   mapBase.on('move zoom', () => {
-    syncOverlayToBase();
+    syncOverlayToBase(true);
     updateStatus();
+  });
+  mapBase.on('moveend zoomend', () => {
+    syncOverlayToBase(false);
   });
   // ベース地図クリック → A設定
   mapBase.on('click', e => onMapClick(e.latlng.lat, e.latlng.lng, 'a'));
@@ -1232,7 +1239,7 @@ function initMaps() {
 // オーバーレイ地図をベースと連動（縮尺・中心点）
 // A基準点からのピクセルオフセットをB基準点に転写することで
 // 「AとBを重ねて比較」する正しいオーバーレイを実現する
-function syncOverlayToBase() {
+function syncOverlayToBase(skipMinimap) {
   const z = mapBase.getZoom();
   const corrZ = S.correctionApplied ? z + Math.log2(getDF()) : z;
   // 手動オフセットはzoom0時点のワールドピクセル単位で保持しているので、現在のzoomに合わせてスケールする
@@ -1257,8 +1264,10 @@ function syncOverlayToBase() {
   const newCenter = mapOverlay.unproject(L.point(bRef.x + dx + manX, bRef.y + dy + manY), corrZ);
 
   mapOverlay.setView(newCenter, corrZ, {animate: false});
-  // ミニマップをオーバーレイと同じ中心・ズームで同期（OVERLAY PREVIEWとして機能）
-  minimapInst.setView(newCenter, corrZ, {animate: false});
+  // ミニマップをオーバーレイと同じ中心・ズームで同期（OVERLAY PREVIEWとして機能）。
+  // ドラッグ/ズーム中の連続呼び出しではスキップし、タイル読み込みが追いつかず
+  // 黒く表示されるのを防ぐ（moveend/zoomendでまとめて追いつかせる）。
+  if (!skipMinimap) minimapInst.setView(newCenter, corrZ, {animate: false});
   // markerBはmapOverlay上のB実座標に固定（追従不要）
 }
 
