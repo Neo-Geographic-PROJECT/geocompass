@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoCompass v1.1 — 都市規模比較</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Kosugi+Maru&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d1117;
+  --panel-bg: #161b22;
+  --panel-bg2: #1c2330;
+  --border: #30363d;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --amber: #d29922;
+  --red: #f85149;
+  --text: #c9d1d9;
+  --dim: #8b949e;
+  --overlay-bg: rgba(13,17,23,0.93);
+  --sidebar-w: 48px;
+  --drawer-w: 340px;
+  --topbar-h: 36px;
+  --rbezel-w: 28px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Rajdhani', 'Kosugi Maru', sans-serif;
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr var(--rbezel-w);
+  grid-template-areas: "topbar topbar topbar" "sidebar main rbezel";
+}
+
+/* ===== TOPBAR ===== */
+#topbar {
+  grid-area: topbar;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 12px; gap: 16px;
+  z-index: 200;
+}
+#app-icon { font-size: 18px; margin-right: 4px; }
+#app-title { font-size: 15px; font-weight: 700; letter-spacing: 1px; color: var(--text); }
+#topbar-stats {
+  margin-left: auto; display: flex; align-items: center; gap: 16px;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+}
+.ts { display: flex; align-items: center; gap: 5px; }
+.ts-label { color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
+.ts-val { color: var(--amber); min-width: 50px; }
+.ts-val.locked { color: var(--green); }
+#view-toggle-btn {
+  margin-left: 8px;
+  background: var(--panel-bg2); border: 1px solid var(--border);
+  color: var(--text); padding: 4px 12px; cursor: pointer;
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  letter-spacing: 1px; transition: all 0.2s; border-radius: 2px;
+}
+#view-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ===== SIDEBAR ===== */
+#sidebar {
+  grid-area: sidebar;
+  background: var(--panel-bg);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 8px 0; gap: 4px; z-index: 150;
+}
+.sb-btn {
+  width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 4px; cursor: pointer; color: var(--dim);
+  font-size: 16px; transition: all 0.15s;
+}
+.sb-btn:hover { color: var(--text); border-color: var(--border); }
+.sb-btn.active { color: var(--accent); border-color: var(--accent); background: rgba(88,166,255,0.1); }
+.sb-divider { width: 24px; height: 1px; background: var(--border); margin: 4px 0; }
+.sb-btn.settings { margin-top: auto; }
+
+/* ===== MAIN ===== */
+#main {
+  grid-area: main;
+  position: relative; overflow: hidden;
+}
+
+/* ===== MAP AREA ===== */
+#map-area {
+  position: absolute; inset: 0;
+}
+
+/* OVERLAY mode */
+#map-base, #map-overlay-el {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+}
+#map-base {
+  /* z-index を明示して独立した stacking context を生成する。
+     これがないと #map-base 内部の .leaflet-tile-pane (z-index:200) が
+     親 #map-area の stacking context に直接参加し、
+     #map-overlay-el (z-index:10) を上から覆ってしまう。 */
+  z-index: 1;
+}
+#map-overlay-el {
+  pointer-events: none;
+  /* #map-base (z-index:1) より上に配置 */
+  z-index: 2;
+  transition: opacity 0.2s;
+  /* #map-overlay-el 自体が leaflet-container になるため直接指定で背景を透過に */
+  background: transparent !important;
+}
+#map-overlay-el.interactive { pointer-events: auto; }
+
+/* SPLIT mode */
+#map-split-a, #map-split-b {
+  position: absolute; top: 0; bottom: 0;
+  transition: width 0.1s;
+}
+#map-split-a { left: 0; width: 50%; }
+#map-split-b { right: 0; width: 50%; border-left: 1px solid var(--border); }
+
+/* map labels */
+.map-label {
+  position: absolute; top: 8px; left: 8px;
+  background: var(--overlay-bg);
+  border: 1px solid var(--border);
+  padding: 3px 10px; z-index: 500;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  pointer-events: none;
+}
+.map-label.a { color: var(--amber); border-color: #7a5500; }
+.map-label.b { color: #6ad4ff; border-color: #1a4a6a; }
+
+/* ===== RIGHT BEZEL ===== */
+#rbezel {
+  grid-area: rbezel;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  cursor: pointer; z-index: 200; gap: 8px;
+  transition: background 0.15s, border-color 0.15s;
+  user-select: none;
+}
+#rbezel:hover { background: var(--panel-bg2); border-left-color: var(--accent); }
+#rbezel.open { border-left-color: var(--accent); }
+#rbezel.open #rbezel-label { color: var(--accent); }
+#rbezel-label {
+  writing-mode: vertical-rl; text-orientation: mixed;
+  font-family: 'Share Tech Mono', monospace; font-size: 9px;
+  letter-spacing: 3px; text-transform: uppercase;
+  color: var(--dim); transition: color 0.15s;
+}
+#rbezel-icon {
+  font-size: 15px; color: var(--dim);
+  transition: color 0.15s, transform 0.3s;
+}
+#rbezel:hover #rbezel-icon { color: var(--accent); }
+#rbezel.open #rbezel-icon { color: var(--accent); transform: rotate(90deg); }
+
+/* minimap → 左上（Aラベルの下）へ移動 */
+#minimap-wrap {
+  position: absolute; top: 40px; left: 8px;
+  z-index: 600; display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+#minimap { cursor: pointer; }
+#minimap-label { cursor: pointer; }
+#minimap {
+  width: 150px; height: 100px;
+  border: 1px solid var(--border);
+  background: #0a0f0a; overflow: hidden;
+}
+#minimap-label {
+  font-family: 'Share Tech Mono', monospace; font-size: 9px;
+  color: var(--dim); letter-spacing: 2px; text-transform: uppercase;
+  text-align: center; width: 150px;
+  background: var(--overlay-bg); border: 1px solid var(--border);
+  border-top: none; padding: 2px;
+}
+
+/* scale */
+#scale-display {
+  position: absolute; bottom: 28px; left: 8px;
+  background: var(--overlay-bg); border: 1px solid var(--border);
+  padding: 3px 10px; z-index: 500;
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  color: var(--dim); pointer-events: none;
+}
+
+/* Leaflet overrides */
+.leaflet-container { background: #0d1117 !important; }
+/* オーバーレイ専用の background 上書きは #map-overlay-el {} に直接記述（上記参照） */
+.leaflet-control-zoom { display: none !important; }
+/* 地理院タイルの出典表示: 常時表示義務のため視認可能な色に */
+.leaflet-control-attribution {
+  background: rgba(13,17,23,0.82) !important;
+  color: var(--dim) !important; font-size: 10px !important;
+  border-radius: 0 !important; padding: 2px 6px !important;
+}
+.leaflet-control-attribution a { color: #58a6ff !important; text-decoration: none; }
+.leaflet-control-attribution a:hover { text-decoration: underline; }
+/* オーバーレイの attribution は opacity:inherit の影響を受けるため非表示
+   (base map の attribution で代替) */
+#map-overlay-el .leaflet-control-attribution { display: none !important; }
+
+/* ===== DRAWER ===== */
+/* position:fixed でbodyレベルのスタッキングコンテキストに置き、
+   Leaflet(z-index 200-600)より確実に前面に表示する */
+#drawer {
+  position: fixed;
+  top: var(--topbar-h);
+  right: var(--rbezel-w);
+  bottom: 0;
+  width: var(--drawer-w);
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+  z-index: 1000;
+  transform: translateX(calc(var(--drawer-w) + var(--rbezel-w)));
+  transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#drawer.open { transform: translateX(0); }
+
+/* ドロワーヘッダーのピンボタン */
+#drawer-pin-btn {
+  background: transparent; border: none;
+  color: var(--dim); cursor: pointer;
+  font-size: 13px; padding: 0 2px;
+  transition: color 0.15s; line-height: 1;
+}
+#drawer-pin-btn:hover { color: var(--text); }
+#drawer-pin-btn.pinned { color: var(--accent); }
+#drawer-toggle {
+  position: absolute; top: 8px; right: 8px; z-index: 110;
+  background: var(--panel-bg2); border: 1px solid var(--border);
+  color: var(--dim); width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 14px; border-radius: 2px;
+  transition: all 0.15s;
+}
+#drawer.closed #drawer-toggle { right: calc(-1 * var(--drawer-w) - 36px); }
+/* [B]ラベルをミニマップ下（左側）に固定 */
+#label-overlay {
+  top: 168px !important; left: 8px !important; right: auto !important;
+}
+#drawer-header {
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  font-size: 12px; letter-spacing: 2px; color: var(--accent);
+  font-family: 'Share Tech Mono', monospace;
+  display: flex; align-items: center; justify-content: space-between;
+}
+#drawer-close {
+  cursor: pointer; color: var(--dim); font-size: 16px;
+  transition: color 0.15s;
+}
+#drawer-close:hover { color: var(--red); }
+#drawer-body {
+  flex: 1; overflow-y: auto; padding: 12px 14px;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+#drawer-body::-webkit-scrollbar { width: 4px; }
+#drawer-body::-webkit-scrollbar-thumb { background: var(--border); }
+
+/* ===== PANEL SECTIONS ===== */
+.dsec { margin-bottom: 16px; }
+.dsec-title {
+  font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--dim); padding: 4px 0; border-bottom: 1px solid var(--border);
+  margin-bottom: 8px; font-family: 'Share Tech Mono', monospace;
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+}
+.dsec-title::before { content: '▾'; font-size: 8px; }
+.dsec-title.collapsed::before { content: '▸'; }
+.dsec-body { }
+.dsec-body.hidden { display: none; }
+
+/* form elements */
+.row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.row-label { font-size: 11px; color: var(--dim); flex: 1; }
+input[type="text"] {
+  flex: 1; background: #0d1117; border: 1px solid var(--border);
+  color: var(--text); padding: 5px 8px;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  outline: none; transition: border-color 0.2s; border-radius: 2px;
+}
+input[type="text"]:focus { border-color: var(--accent); }
+select {
+  background: #0d1117; border: 1px solid var(--border);
+  color: var(--text); padding: 4px 6px;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  outline: none; border-radius: 2px;
+}
+input[type="range"] { flex: 1; accent-color: var(--accent); }
+.range-val { min-width: 34px; text-align: right; font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--amber); }
+input[type="checkbox"] { accent-color: var(--accent); }
+
+.btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); padding: 5px 10px; cursor: pointer;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  letter-spacing: 1px; transition: all 0.15s; border-radius: 2px;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { border-color: var(--accent); color: var(--accent); }
+.btn.primary:hover { background: var(--accent); color: var(--bg); }
+.btn.amber { border-color: var(--amber); color: var(--amber); }
+.btn.amber:hover { background: var(--amber); color: var(--bg); }
+.btn.green { border-color: var(--green); color: var(--green); }
+.btn.green:hover { background: var(--green); color: var(--bg); }
+.btn.danger { border-color: var(--red); color: var(--red); }
+.btn.full { width: 100%; text-align: center; }
+
+/* search results */
+.search-results-wrap { position: relative; }
+.search-results {
+  position: absolute; left: 0; right: 0; z-index: 900;
+  background: var(--panel-bg2); border: 1px solid var(--border);
+  max-height: 180px; overflow-y: auto; display: none; border-radius: 2px;
+  top: 0;
+}
+.result-item {
+  padding: 7px 10px; cursor: pointer;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s; color: var(--text);
+}
+.result-item:hover { background: rgba(88,166,255,0.1); color: var(--accent); }
+
+/* coord display */
+.coord-card {
+  background: #0d1117; border: 1px solid var(--border);
+  padding: 6px 10px; border-radius: 2px;
+  display: grid; grid-template-columns: auto 1fr auto 1fr;
+  gap: 3px 10px; font-family: 'Share Tech Mono', monospace; font-size: 11px;
+}
+.ck { color: var(--dim); }
+.cv { color: var(--text); }
+.cv.elev { color: var(--amber); }
+
+/* ===== DISTORTION CARD ===== */
+.distort-card {
+  background: #0d1117; border: 1px solid var(--border);
+  padding: 12px; border-radius: 2px; text-align: center; position: relative;
+}
+.distort-main {
+  display: flex; align-items: baseline; justify-content: center; gap: 6px;
+  margin: 6px 0;
+}
+.distort-num {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 32px; font-weight: 700; color: var(--amber);
+  transition: color 0.3s;
+  line-height: 1;
+}
+.distort-num.locked { color: var(--green); }
+.distort-pct {
+  font-family: 'Share Tech Mono', monospace; font-size: 18px; color: var(--dim);
+}
+.distort-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: rgba(63,185,80,0.15); border: 1px solid var(--green);
+  color: var(--green); padding: 2px 8px; border-radius: 2px;
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  letter-spacing: 1px; opacity: 0; transition: opacity 0.3s;
+}
+.distort-badge.visible { opacity: 1; }
+
+/* lat info grid */
+.lat-grid {
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 3px 8px; font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  margin: 8px 0; color: var(--dim); text-align: left;
+}
+.lat-grid .lg-key { }
+.lat-grid .lg-val { color: var(--text); text-align: right; }
+
+/* gauge bar */
+.gauge-wrap { margin: 6px 0; }
+.gauge-track {
+  height: 6px; background: #1c2330; border-radius: 3px;
+  position: relative; overflow: hidden;
+}
+.gauge-fill {
+  position: absolute; left: 0; top: 0; height: 100%;
+  border-radius: 3px; transition: width 0.3s, background 0.3s;
+}
+.gauge-marks {
+  display: flex; justify-content: space-between;
+  font-family: 'Share Tech Mono', monospace; font-size: 9px; color: var(--dim);
+  margin-top: 2px;
+}
+
+/* viz mode thumbnails */
+.viz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.viz-thumb {
+  border: 2px solid var(--border); border-radius: 2px;
+  padding: 4px; cursor: pointer; transition: all 0.15s;
+  text-align: center;
+}
+.viz-thumb:hover { border-color: var(--accent); }
+.viz-thumb.active { border-color: var(--accent); }
+.viz-thumb-img {
+  width: 100%; aspect-ratio: 2/1; background: #1c2330;
+  border-radius: 1px; margin-bottom: 4px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px;
+}
+.viz-thumb-label { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--dim); }
+
+/* road color chips */
+.color-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.color-chip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border: 1px solid var(--border);
+  border-radius: 2px; cursor: pointer; transition: all 0.15s;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+}
+.color-chip:hover { border-color: var(--accent); }
+.color-chip.active { border-color: currentColor; }
+.chip-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* presets */
+.preset-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.preset-btn {
+  background: #0d1117; border: 1px solid var(--border);
+  color: var(--dim); padding: 6px 2px; cursor: pointer;
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  text-align: center; transition: all 0.15s; border-radius: 2px;
+  line-height: 1.4;
+}
+.preset-btn:hover { border-color: var(--accent); color: var(--accent); }
+.preset-btn.filled { border-color: #30363d; color: var(--text); }
+.preset-btn.selected { border-color: var(--accent); }
+.preset-name { font-size: 9px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* analysis mode */
+.analysis-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 0;
+  border-bottom: 1px solid #161b22;
+  font-size: 12px; cursor: pointer; transition: color 0.15s;
+}
+.analysis-row:hover { color: var(--accent); }
+.analysis-row.active { color: var(--accent); }
+.analysis-row .ar-icon { font-size: 14px; min-width: 20px; }
+
+/* flash msg */
+#flash-msg {
+  position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+  background: var(--panel-bg2); border: 1px solid var(--green);
+  color: var(--green); padding: 4px 16px; z-index: 800;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  letter-spacing: 2px; pointer-events: none;
+  opacity: 0; transition: opacity 0.3s;
+}
+#flash-msg.show { opacity: 1; }
+
+/* lock animation */
+@keyframes lockPulse {
+  0%,100%{box-shadow: 0 0 0 rgba(63,185,80,0)} 50%{box-shadow: 0 0 12px rgba(63,185,80,0.5)}
+}
+.locked-anim { animation: lockPulse 1.2s ease-in-out infinite; }
+
+/* オーバーレイマップ: Leaflet のコンテナ背景を透過にして CSS opacity で透明度制御 */
+#map-overlay-el .leaflet-container { background: transparent !important; }
+
+/* ヘルプモーダル */
+#help-modal {
+  display: none; position: fixed; inset: 0; z-index: 9000;
+  background: rgba(0,0,0,0.75);
+  align-items: center; justify-content: center;
+}
+#help-modal.open { display: flex; }
+#help-modal-box {
+  background: var(--panel-bg); border: 1px solid var(--border);
+  border-radius: 4px; max-width: 640px; width: 95vw;
+  max-height: 85vh; display: flex; flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+#help-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+  font-family: 'Share Tech Mono', monospace; font-size: 13px;
+  letter-spacing: 2px; color: var(--accent);
+}
+#help-modal-body {
+  overflow-y: auto; padding: 16px 20px;
+  font-size: 12px; line-height: 1.8; color: var(--text);
+}
+#help-modal-body h3 {
+  font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--accent); margin: 16px 0 6px;
+  border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+#help-modal-body h3:first-child { margin-top: 0; }
+#help-modal-body p { margin: 4px 0; }
+#help-modal-body table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+#help-modal-body td { padding: 3px 8px; vertical-align: top; }
+#help-modal-body td:first-child {
+  font-family: 'Share Tech Mono', monospace; color: var(--amber);
+  white-space: nowrap; width: 36%;
+}
+#help-modal-body tr:nth-child(even) td { background: var(--panel-bg2); }
+#help-modal-body .note {
+  margin: 10px 0; padding: 8px 12px;
+  background: var(--panel-bg2); border-left: 3px solid var(--accent);
+  color: var(--dim); font-size: 11px;
+}
+#help-close-btn {
+  background: none; border: 1px solid var(--border); color: var(--dim);
+  font-size: 16px; cursor: pointer; padding: 0 8px; border-radius: 2px;
+}
+#help-close-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* topbar ヘルプボタン */
+#help-btn {
+  margin-left: 6px; padding: 3px 10px;
+  background: none; border: 1px solid var(--dim);
+  color: var(--dim); cursor: pointer; border-radius: 2px;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  letter-spacing: 1px; transition: all 0.15s;
+}
+#help-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* 解析モード説明テキスト */
+.ar-desc { font-size: 10px; color: var(--dim); margin-left: auto; opacity: 0.8; }
+
+/* A↔B 入れ替えボタン（白地に黒文字） */
+#swap-btn:hover {
+  background: #ffffff !important;
+  border-color: var(--accent) !important;
+  color: #0d1117 !important;
+}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<header id="topbar">
+  <span id="app-icon">🗺</span>
+  <span id="app-title">Map Overlay Plan</span>
+  <div style="width:1px;height:18px;background:var(--border);margin:0 4px"></div>
+  <div id="topbar-stats">
+    <div class="ts"><span class="ts-label">ZOOM</span><span class="ts-val" id="ts-zoom">—</span></div>
+    <div class="ts"><span class="ts-label">DISTORT</span><span class="ts-val" id="ts-distort">—</span></div>
+    <div class="ts"><span class="ts-label">LAT-A</span><span class="ts-val" id="ts-lat-a">—</span></div>
+    <div class="ts"><span class="ts-label">LAT-B</span><span class="ts-val" id="ts-lat-b">—</span></div>
+    <div class="ts" id="ts-lock-wrap" style="display:none">
+      <span class="ts-val locked" id="ts-lock">⊕ LOCKED</span>
+    </div>
+  </div>
+  <button id="view-toggle-btn" onclick="toggleViewMode()">⇔ SPLIT VIEW</button>
+  <button id="help-btn" onclick="showHelp()" title="操作説明">? HELP</button>
+</header>
+
+<!-- ヘルプモーダル -->
+<div id="help-modal" onclick="if(event.target===this)closeHelp()">
+  <div id="help-modal-box">
+    <div id="help-modal-head">
+      <span>📖 GeoCompass v1.1 — 操作説明</span>
+      <button id="help-close-btn" onclick="closeHelp()">✕</button>
+    </div>
+    <div id="help-modal-body">
+      <h3>基本の使い方</h3>
+      <p>AとBの2地点を設定し、都市規模・地形・インフラを重ねて比較するツールです。</p>
+      <table>
+        <tr><td>地点A（基準）の検索</td><td>操作パネル → 地名・住所 を入力して GO</td></tr>
+        <tr><td>地点B（比較対象）の検索</td><td>同上（B欄）。初期値はAの中心に設定</td></tr>
+        <tr><td>地点A/B の入れ替え</td><td>ミニマップ下の「⇅ OVERLAY PREVIEW」クリック<br>またはパネル内「⇅ A ↔ B 入れ替え」ボタン</td></tr>
+      </table>
+
+      <h3>表示モード切替</h3>
+      <table>
+        <tr><td>⊕ OVERLAY VIEW</td><td>A地図の上にB地図を重ねて表示。透明度スライダーで透過度を調整</td></tr>
+        <tr><td>⇔ SPLIT VIEW</td><td>画面を左右に分割。ズームは連動、パン（移動）は独立</td></tr>
+      </table>
+
+      <h3>オーバーレイモード — 地図B の透明度</h3>
+      <p>操作パネル内「B 透明度」スライダーで 0〜100% を調整。<br>
+      値を下げると地図 B が透明になり、下の地図 A が見えます。</p>
+
+      <h3>視覚化モード（オーバーレイ B に適用）</h3>
+      <table>
+        <tr><td>標準表示</td><td>通常の淡色地図</td></tr>
+        <tr><td>モノクロ表示</td><td>グレースケール化。街区・道路パターンの比較に</td></tr>
+        <tr><td>ハイコントラスト</td><td>白黒反転＋コントラスト強調。形状比較に</td></tr>
+        <tr><td>陰影起伏</td><td>地理院の陰影起伏図タイルに切替。地形比較に</td></tr>
+      </table>
+      <p>※ 特定要素強調（道路カラー）は地図 A（ベース）の道路色を変更します。</p>
+
+      <h3>比較解析モード（プリセット設定）</h3>
+      <p>各モードを選択すると、透明度・視覚化・道路強調が自動でプリセットされます。<br>
+      モードを切り替えると前の設定はリセットされます。個別に調整後は「カスタム」に切替で保持可能です。</p>
+      <table>
+        <tr><td>◈ カスタム</td><td>全設定を初期値にリセット</td></tr>
+        <tr><td>⊞ 標準比較</td><td>透明度 60%、標準タイル</td></tr>
+        <tr><td>⊙ 都市規模比較</td><td>透明度 50%、淡色タイルで都市の広がりを比較</td></tr>
+        <tr><td>🏔 地形・標高比較</td><td>陰影起伏タイルに切替、透明度 70%</td></tr>
+        <tr><td>🏗 都市インフラ比較</td><td>透明度 60%＋道路を赤で強調表示</td></tr>
+      </table>
+
+      <h3>メルカトル歪み補正</h3>
+      <p>緯度差がある2地点を比較する際、メルカトル図法による縮尺の歪みが生じます。</p>
+      <table>
+        <tr><td>歪み係数</td><td>1.0 に近いほど両地点の縮尺が一致。0.5 や 2.0 は大きな歪みを示す</td></tr>
+        <tr><td>自動補正 APPLY</td><td>地図 B のズームを自動調整して視覚的縮尺を一致させる</td></tr>
+        <tr><td>ZOOM SYNC</td><td>A と B のズームを手動で一致させる</td></tr>
+      </table>
+
+      <h3>プリセット / ホーム</h3>
+      <table>
+        <tr><td>現在地を保存</td><td>A・B地点とズームを最大5スロットに保存</td></tr>
+        <tr><td>HOME 保存 / 復元</td><td>起動時の初期状態を保存・呼び出し</td></tr>
+      </table>
+
+      <h3>操作 Tips</h3>
+      <table>
+        <tr><td>右ベゼル（PANEL）</td><td>クリックで操作パネルを開閉</td></tr>
+        <tr><td>左サイドバー</td><td>アイコンで表示カテゴリを切替（現バージョンでは操作はパネル側）</td></tr>
+        <tr><td>縮尺バー</td><td>画面左下に現在のズームスケールを表示</td></tr>
+      </table>
+
+      <div class="note">
+        <strong>地図の出典について（重要）</strong><br>
+        本ツールは<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" style="color:var(--accent)">国土地理院タイル</a>を使用しています。
+        地理院タイルの利用にあたっては「地理院タイル」と出典を明示する義務があります。
+        各地図画面の右下に「地理院タイル」のクレジットが常時表示されています。<br>
+        出典：<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" style="color:var(--accent)">https://maps.gsi.go.jp/development/ichiran.html</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SIDEBAR -->
+<nav id="sidebar">
+  <button class="sb-btn active" id="sb-map" title="地図" onclick="setSidebarActive('map')">🗺</button>
+  <button class="sb-btn" id="sb-layers" title="レイヤー" onclick="setSidebarActive('layers')">⊞</button>
+  <button class="sb-btn" id="sb-pin" title="地点" onclick="setSidebarActive('pin')">⊕</button>
+  <div class="sb-divider"></div>
+  <button class="sb-btn settings" id="sb-settings" title="設定" onclick="setSidebarActive('settings')">⚙</button>
+</nav>
+
+<!-- MAIN -->
+<main id="main">
+  <!-- OVERLAY MODE -->
+  <div id="map-area" style="position:absolute;inset:0">
+    <div id="map-base"></div>
+    <div id="map-overlay-el"></div>
+  </div>
+
+  <!-- SPLIT MODE (hidden by default) -->
+  <div id="split-area" style="position:absolute;inset:0;display:none">
+    <div id="map-split-a">
+      <div id="map-sa" style="width:100%;height:100%"></div>
+      <div class="map-label a" id="label-sa">[ A ] <span id="lname-sa">—</span></div>
+    </div>
+    <div id="map-split-b">
+      <div id="map-sb" style="width:100%;height:100%"></div>
+      <div class="map-label b" id="label-sb">[ B ] <span id="lname-sb">—</span></div>
+    </div>
+  </div>
+
+  <!-- MAP LABELS (overlay mode) — z-indexはCSS(.map-label z-index:500)に任せる -->
+  <div class="map-label a" id="label-base">[ A ] <span id="lname-base">東京</span></div>
+  <div class="map-label b" id="label-overlay">[ B ] <span id="lname-overlay">—</span></div>
+
+  <!-- MINIMAP（左上、Aラベル下） -->
+  <div id="minimap-wrap">
+    <div id="minimap"></div>
+    <div id="minimap-label" onclick="swapPoints()" title="クリックでA/Bを入れ替え">⇅ OVERLAY PREVIEW</div>
+  </div>
+
+  <!-- SCALE -->
+  <div id="scale-display">1:—</div>
+
+  <!-- FLASH MSG -->
+  <div id="flash-msg">OK</div>
+
+  <!-- DRAWER：position:fixed でLeafletより前面に表示 -->
+  <div id="drawer">
+    <div id="drawer-header">
+      <span>マップ制御と解析</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button id="drawer-pin-btn" onclick="toggleDrawerPin()" title="常時表示に固定">📍</button>
+        <span id="drawer-close" onclick="toggleDrawer()">✕</span>
+      </div>
+    </div>
+    <div id="drawer-body">
+
+      <!-- 地図表示設定 -->
+      <div class="dsec">
+        <div class="dsec-title" onclick="toggleSection(this)">地図表示設定</div>
+        <div class="dsec-body">
+
+          <!-- Point A search -->
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:var(--amber);letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:4px">POINT A — ベース地図</div>
+            <div class="row">
+              <input type="text" id="search-a" placeholder="地名・住所">
+              <button class="btn amber" onclick="doSearch('a')">GO</button>
+            </div>
+            <div class="search-results-wrap">
+              <div class="search-results" id="sres-a"></div>
+            </div>
+            <div class="coord-card" id="coord-a">
+              <span class="ck">LAT</span><span class="cv" id="ca-lat">—</span>
+              <span class="ck">LNG</span><span class="cv" id="ca-lng">—</span>
+              <span class="ck">ELEV</span><span class="cv elev" id="ca-elev">—</span>
+              <span></span><span></span>
+            </div>
+          </div>
+
+          <!-- A↔B 入れ替え（目立たせる：白地に黒文字） -->
+          <div style="display:flex;justify-content:center;margin:4px 0 10px">
+            <button id="swap-btn" onclick="swapPoints()" title="AとBの地点を入れ替える"
+              style="flex:1;padding:7px 0;background:#e6edf3;color:#0d1117;border:2px solid #e6edf3;
+                     border-radius:3px;cursor:pointer;font-family:'Share Tech Mono',monospace;
+                     font-size:12px;font-weight:700;letter-spacing:2px;
+                     transition:background 0.15s,border-color 0.15s,color 0.15s;">
+              ⇅ &nbsp; A ↔ B 入れ替え
+            </button>
+          </div>
+
+          <!-- Point B search -->
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:#6ad4ff;letter-spacing:2px;font-family:'Share Tech Mono',monospace;margin-bottom:4px">POINT B — オーバーレイ</div>
+            <div class="row">
+              <input type="text" id="search-b" placeholder="地名・住所">
+              <button class="btn" style="border-color:#6ad4ff;color:#6ad4ff" onclick="doSearch('b')">GO</button>
+            </div>
+            <div class="search-results-wrap">
+              <div class="search-results" id="sres-b"></div>
+            </div>
+            <div class="coord-card" id="coord-b">
+              <span class="ck">LAT</span><span class="cv" id="cb-lat">—</span>
+              <span class="ck">LNG</span><span class="cv" id="cb-lng">—</span>
+              <span class="ck">ELEV</span><span class="cv elev" id="cb-elev">—</span>
+              <span></span><span></span>
+            </div>
+          </div>
+
+          <!-- Overlay opacity -->
+          <div class="row">
+            <span class="row-label">対象: <span id="overlay-target-label" style="color:#6ad4ff">B</span> 透明度</span>
+          </div>
+          <div class="row">
+            <input type="range" id="opacity-slider" min="0" max="100" value="60" oninput="updateOpacity()">
+            <span class="range-val" id="opacity-val">60%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 視覚化モード -->
+      <div class="dsec">
+        <div class="dsec-title" onclick="toggleSection(this)">視覚化モード</div>
+        <div class="dsec-body">
+          <div class="viz-grid" id="viz-grid">
+            <div class="viz-thumb active" onclick="setVizMode('standard',this)" data-mode="standard">
+              <div class="viz-thumb-img">🗺</div>
+              <div class="viz-thumb-label">標準表示</div>
+            </div>
+            <div class="viz-thumb" onclick="setVizMode('mono',this)" data-mode="mono">
+              <div class="viz-thumb-img" style="filter:grayscale(1)">🗺</div>
+              <div class="viz-thumb-label">モノクロ表示</div>
+            </div>
+            <div class="viz-thumb" onclick="setVizMode('hicon',this)" data-mode="hicon">
+              <div class="viz-thumb-img" style="filter:invert(1) grayscale(1)">🗺</div>
+              <div class="viz-thumb-label">ハイコントラスト</div>
+            </div>
+            <div class="viz-thumb" onclick="setVizMode('relief',this)" data-mode="relief">
+              <div class="viz-thumb-img">🏔</div>
+              <div class="viz-thumb-label">陰影起伏</div>
+            </div>
+          </div>
+
+          <div style="margin-top:10px">
+            <div class="row"><span class="row-label" style="font-size:10px;letter-spacing:2px">特定要素の強調（道路カラー）</span></div>
+            <div class="row">
+              <select id="road-highlight-mode" style="flex:1" onchange="updateRoadHighlight()">
+                <option value="none">強調なし</option>
+                <option value="red">道路を赤で強調</option>
+                <option value="blue">道路を青で強調</option>
+                <option value="green">道路を緑で強調</option>
+              </select>
+            </div>
+            <div class="color-chips" id="color-chips">
+              <div class="color-chip active" style="color:#f85149" onclick="selectChip(this,'red')">
+                <div class="chip-dot" style="background:#f85149"></div>赤
+              </div>
+              <div class="color-chip" style="color:#58a6ff" onclick="selectChip(this,'blue')">
+                <div class="chip-dot" style="background:#58a6ff"></div>青
+              </div>
+              <div class="color-chip" style="color:#3fb950" onclick="selectChip(this,'green')">
+                <div class="chip-dot" style="background:#3fb950"></div>緑
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:8px">
+            <button class="btn full" onclick="resetDisplayOnly()" style="font-size:10px">⟳ 表示のみ初期化（地点保持）</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 補正設定 -->
+      <div class="dsec">
+        <div class="dsec-title" onclick="toggleSection(this)">補正設定（メルカトル歪み補正）</div>
+        <div class="dsec-body">
+          <div class="distort-card" id="distort-card">
+            <div class="lat-grid" id="lat-grid">
+              <span class="lg-key">基準緯度 (A)</span>
+              <span class="lg-val" id="lg-lat-a">—</span>
+              <span class="lg-key">オーバーレイ緯度 (B)</span>
+              <span class="lg-val" id="lg-lat-b">—</span>
+              <span class="lg-key">縮尺歪み係数</span>
+              <span class="lg-val" id="lg-factor" style="color:var(--amber)">—</span>
+            </div>
+            <div class="distort-main">
+              <span class="distort-num" id="dn-factor">—</span>
+              <span class="distort-pct" id="dn-pct">/ —%</span>
+              <span class="distort-badge" id="dn-badge">✓ LOCKED</span>
+            </div>
+            <div class="gauge-wrap">
+              <div class="gauge-track">
+                <div class="gauge-fill" id="gauge-fill" style="width:50%"></div>
+              </div>
+              <div class="gauge-marks"><span>×0.5</span><span>×1.0</span><span>×2.0</span></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn primary" style="flex:1" onclick="applyCorrection()">自動補正 APPLY</button>
+            <button class="btn" style="flex:1" onclick="syncZoom()">ZOOM SYNC</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn amber" style="flex:1" onclick="saveHome()">HOME 保存</button>
+            <button class="btn" style="flex:1" onclick="loadHome()">HOME 復元</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- プリセット -->
+      <div class="dsec">
+        <div class="dsec-title" onclick="toggleSection(this)">プリセットとホーム（機能B）</div>
+        <div class="dsec-body">
+          <div class="preset-grid" id="preset-grid"></div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn green" style="flex:1" onclick="savePreset()">現在地を保存</button>
+            <button class="btn danger" style="flex:1" onclick="clearPreset()">選択削除</button>
+          </div>
+          <div style="margin-top:4px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim)">
+            SLOT: <span id="preset-slot-label">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 比較解析モード -->
+      <div class="dsec">
+        <div class="dsec-title" onclick="toggleSection(this)">比較解析モード</div>
+        <div class="dsec-body">
+          <div style="font-size:10px;color:var(--dim);margin-bottom:6px;letter-spacing:1px">
+            ※ 選択すると透明度・表示が切替わります（排他）
+          </div>
+          <div id="analysis-list">
+            <div class="analysis-row active" onclick="setAnalysisMode(this,'custom')">
+              <span class="ar-icon">◈</span>カスタム<span class="ar-desc">全設定を初期値に</span>
+            </div>
+            <div class="analysis-row" onclick="setAnalysisMode(this,'standard')">
+              <span class="ar-icon">⊞</span>標準比較<span class="ar-desc">透過60% 標準</span>
+            </div>
+            <div class="analysis-row" onclick="setAnalysisMode(this,'scale')">
+              <span class="ar-icon">⊙</span>都市規模比較<span class="ar-desc">透過50% 淡色</span>
+            </div>
+            <div class="analysis-row" onclick="setAnalysisMode(this,'terrain')">
+              <span class="ar-icon">🏔</span>地形・標高比較<span class="ar-desc">陰影起伏 透過70%</span>
+            </div>
+            <div class="analysis-row" onclick="setAnalysisMode(this,'infra')">
+              <span class="ar-icon">🏗</span>都市インフラ比較<span class="ar-desc">道路 赤強調</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /drawer-body -->
+  </div><!-- /drawer -->
+</main>
+
+<!-- RIGHT BEZEL：操作パネル開閉タブ -->
+<aside id="rbezel" onclick="toggleDrawer()" title="操作パネルを開く / 閉じる">
+  <span id="rbezel-icon">≡</span>
+  <span id="rbezel-label">PANEL</span>
+</aside>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ===== TILES =====
+const TILES = {
+  color:  'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
+  pale:   'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
+  blank:  'https://cyberjapandata.gsi.go.jp/xyz/blank/{z}/{x}/{y}.png',
+  photo:  'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
+  relief: 'https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png',
+};
+const ATTR = '<a href="https://maps.gsi.go.jp/development/ichiran.html">地理院タイル</a>';
+
+// ===== STATE =====
+const S = {
+  pointA: null,
+  pointB: null,
+  viewMode: 'overlay',
+  selectedPreset: -1,
+  vizMode: 'standard',
+  overlayOpacity: 0.6,
+  correctionApplied: false,
+  drawerPinned: false,
+};
+
+function loadSavedState() {
+  const d = localStorage.getItem('geocompass_v11');
+  if (!d) return;
+  try {
+    const s = JSON.parse(d);
+    if (s.pointA) S.pointA = s.pointA;
+    if (s.pointB) S.pointB = s.pointB;
+  } catch(e) {}
+}
+function persistState() {
+  localStorage.setItem('geocompass_v11', JSON.stringify({
+    pointA: S.pointA, pointB: S.pointB
+  }));
+}
+
+// ===== MAPS =====
+let mapBase, mapOverlay, mapSA, mapSB;
+let tileBase, tileOverlay, tileSA, tileSB;
+let markerA, markerB, markerSA, markerSB;
+let minimapInst, minimapTile;
+
+const iconA = () => L.divIcon({
+  html: '<div style="width:10px;height:10px;background:#d29922;border:2px solid #0d1117;border-radius:50%;box-shadow:0 0 6px #d29922"></div>',
+  iconSize:[10,10], iconAnchor:[5,5], className:''
+});
+const iconB = () => L.divIcon({
+  html: '<div style="width:10px;height:10px;background:#6ad4ff;border:2px solid #0d1117;border-radius:50%;box-shadow:0 0 6px #6ad4ff"></div>',
+  iconSize:[10,10], iconAnchor:[5,5], className:''
+});
+
+function initMaps() {
+  const defA = S.pointA ? [S.pointA.lat, S.pointA.lng] : [35.6762, 139.6503];
+  const defB = S.pointB ? [S.pointB.lat, S.pointB.lng] : [51.5074, -0.1278];
+
+  // OVERLAY mode maps
+  // mapOverlay は常に mapBase と同じ中心・ズームで追従。
+  // 地点Bのタイルは「Bを中心として描画」するのではなく、
+  // 「AをBと同一視してBのタイルを張る」= mapOverlay の center は常に mapBase と同じ。
+  mapBase    = L.map('map-base',       {zoomControl:false}).setView(defA, 12);
+  mapOverlay = L.map('map-overlay-el', {zoomControl:false}).setView(defA, 12);
+  tileBase    = L.tileLayer(TILES.color, {attribution:ATTR, maxZoom:18}).addTo(mapBase);
+  tileOverlay = L.tileLayer(TILES.pale,  {attribution:ATTR, maxZoom:18}).addTo(mapOverlay);
+  // 透明度は CSS opacity でコンテナ全体に適用（Leafletのbg透過と組み合わせ）
+  document.getElementById('map-overlay-el').style.opacity = S.overlayOpacity;
+
+  // SPLIT mode maps
+  mapSA = L.map('map-sa', {zoomControl:false}).setView(defA, 12);
+  mapSB = L.map('map-sb', {zoomControl:false}).setView(defB, 12);
+  tileSA = L.tileLayer(TILES.color, {attribution:ATTR, maxZoom:18}).addTo(mapSA);
+  tileSB = L.tileLayer(TILES.pale,  {attribution:ATTR, maxZoom:18}).addTo(mapSB);
+
+  // 全タイル初期化後にビジュアライズ設定を適用
+  applyVizFilter();
+
+  // Minimap（オーバーレイと縮尺・中心点を同期するプレビュー）
+  minimapInst = L.map('minimap', {zoomControl:false, attributionControl:false, dragging:false, touchZoom:false, scrollWheelZoom:false, doubleClickZoom:false}).setView(defB, 12);
+  minimapTile = L.tileLayer(TILES.pale, {maxZoom:18}).addTo(minimapInst);
+  // クリックでA/Bレイヤを入れ替え（flashMsgはswapPoints内で発火）
+  minimapInst.on('click', () => swapPoints());
+
+  // Markers
+  if (S.pointA) placeMarkerA(S.pointA.lat, S.pointA.lng);
+  if (S.pointB) updateOverlayCenter(); // Bマーカーはオーバーレイ中心に配置
+
+  // Events
+  // mapBase 移動 → mapOverlay を同じ center/zoom に同期（センタリング維持）
+  mapBase.on('move zoom', () => {
+    syncOverlayToBase();
+    updateStatus();
+  });
+  // ベース地図クリック → A設定
+  mapBase.on('click', e => onMapClick(e.latlng.lat, e.latlng.lng, 'a'));
+  // オーバーレイ地図クリック → B設定（オーバーレイ座標系≠実座標なので変換）
+  mapOverlay.on('click', e => {
+    // オーバーレイは mapBase と同じピクセル空間を共有しているため、
+    // クリック座標をそのまま B の「ピン位置」として扱い、実際の B 座標は別管理
+    // → ここではオーバーレイ地図上のクリックをベース座標として A 設定に使う
+    // B の座標設定はジオコーダ検索から行う（クリックはAのみ）
+    onMapClick(e.latlng.lat, e.latlng.lng, 'a');
+  });
+  // スプリットモード: ズームのみ連動、パンは独立
+  let splitSyncing = false;
+  mapSA.on('zoomend', () => {
+    if (splitSyncing || S.viewMode !== 'split') return;
+    splitSyncing = true;
+    const corrZ = S.correctionApplied ? mapSA.getZoom() + Math.log2(getDF()) : mapSA.getZoom();
+    mapSB.setZoom(corrZ);
+    splitSyncing = false;
+    updateStatus();
+  });
+  mapSB.on('zoomend', () => {
+    if (splitSyncing || S.viewMode !== 'split') return;
+    splitSyncing = true;
+    const corrZ = S.correctionApplied ? mapSB.getZoom() - Math.log2(getDF()) : mapSB.getZoom();
+    mapSA.setZoom(corrZ);
+    splitSyncing = false;
+    updateStatus();
+  });
+  mapSA.on('move', updateStatus);
+  mapSB.on('move', updateStatus);
+
+  updateCoordUI();
+  updateStatus();
+  renderPresets();
+}
+
+// オーバーレイ地図をベースと連動（縮尺・中心点）
+// A基準点からのピクセルオフセットをB基準点に転写することで
+// 「AとBを重ねて比較」する正しいオーバーレイを実現する
+function syncOverlayToBase() {
+  const z = mapBase.getZoom();
+  const corrZ = S.correctionApplied ? z + Math.log2(getDF()) : z;
+
+  if (!S.pointA || !S.pointB) {
+    // A/B未設定時はベースと同じ中心を表示（初期状態）
+    mapOverlay.setView(mapBase.getCenter(), corrZ, {animate: false});
+    return;
+  }
+
+  // mapBase上での「A基準点→現在中心」のピクセルオフセットを計算
+  const aRef = mapBase.project(L.latLng(S.pointA.lat, S.pointA.lng), z);
+  const aCur = mapBase.project(mapBase.getCenter(), z);
+  const dx = aCur.x - aRef.x;
+  const dy = aCur.y - aRef.y;
+
+  // B側: B基準点に同じオフセットを加算した地点をオーバーレイの中心にする
+  const bRef = mapOverlay.project(L.latLng(S.pointB.lat, S.pointB.lng), corrZ);
+  const newCenter = mapOverlay.unproject(L.point(bRef.x + dx, bRef.y + dy), corrZ);
+
+  mapOverlay.setView(newCenter, corrZ, {animate: false});
+  // ミニマップをオーバーレイと同じ中心・ズームで同期（OVERLAY PREVIEWとして機能）
+  minimapInst.setView(newCenter, corrZ, {animate: false});
+  // markerBはmapOverlay上のB実座標に固定（追従不要）
+}
+
+// Bマーカーをオーバーレイ地図上のB実座標に配置し、同期を実行
+function updateOverlayCenter() {
+  if (!S.pointB) return;
+  if (markerB) markerB.remove();
+  // markerBはmapOverlay上のBの実際の地理座標に配置する
+  // syncOverlayToBaseによってオーバーレイが正しく位置合わせされるため、
+  // マーカーはA基準点と視覚的に重なる位置に表示される
+  markerB = L.marker([S.pointB.lat, S.pointB.lng], {icon: iconB()}).addTo(mapOverlay);
+  minimapInst.setView([S.pointB.lat, S.pointB.lng], 8);
+  syncOverlayToBase();
+}
+
+function onMapClick(lat, lng, which) {
+  fetchElev(lat, lng).then(elev => {
+    const point = { lat, lng, name: `${lat.toFixed(4)},${lng.toFixed(4)}`, elev };
+    setPoint(which, point);
+  });
+}
+
+function setPoint(which, point, movemap=true) {
+  if (which === 'a') {
+    S.pointA = point;
+    placeMarkerA(point.lat, point.lng);
+    if (movemap) { mapBase.setView([point.lat, point.lng]); mapSA.setView([point.lat, point.lng]); }
+    document.getElementById('lname-base').textContent = trunc(point.name, 10);
+    document.getElementById('lname-sa').textContent   = trunc(point.name, 10);
+  } else {
+    S.pointB = point;
+    // オーバーレイモード: Bマーカーは常にAの中心(=オーバーレイ中心)に配置
+    updateOverlayCenter();
+    // スプリットモード: SBはBの実座標に移動
+    if (markerSB) markerSB.remove();
+    markerSB = L.marker([point.lat, point.lng], {icon: iconB()}).addTo(mapSB);
+    if (movemap) mapSB.setView([point.lat, point.lng]);
+    minimapInst.setView([point.lat, point.lng], 8);
+    document.getElementById('lname-overlay').textContent = trunc(point.name, 10);
+    document.getElementById('lname-sb').textContent      = trunc(point.name, 10);
+  }
+  persistState();
+  updateCoordUI();
+  updateStatus();
+}
+
+function placeMarkerA(lat, lng) {
+  if (markerA) markerA.remove();
+  if (markerSA) markerSA.remove();
+  markerA  = L.marker([lat,lng], {icon:iconA()}).addTo(mapBase);
+  markerSA = L.marker([lat,lng], {icon:iconA()}).addTo(mapSA);
+}
+function placeMarkerB(lat, lng) {
+  if (markerB) markerB.remove();
+  if (markerSB) markerSB.remove();
+  markerB  = L.marker([lat,lng], {icon:iconB()}).addTo(mapOverlay);
+  markerSB = L.marker([lat,lng], {icon:iconB()}).addTo(mapSB);
+}
+function trunc(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : (s||'—'); }
+
+// ===== A↔B 入れ替え =====
+function swapPoints() {
+  const tmp = S.pointA;
+  S.pointA = S.pointB;
+  S.pointB = tmp;
+
+  // Aマーカー・マップ更新
+  if (S.pointA) {
+    placeMarkerA(S.pointA.lat, S.pointA.lng);
+    mapBase.setView([S.pointA.lat, S.pointA.lng]);
+    mapSA.setView([S.pointA.lat, S.pointA.lng]);
+    document.getElementById('lname-base').textContent = trunc(S.pointA.name, 10);
+    document.getElementById('lname-sa').textContent   = trunc(S.pointA.name, 10);
+    document.getElementById('search-a').value = S.pointA.name || '';
+  } else {
+    if (markerA)  { markerA.remove();  markerA  = null; }
+    if (markerSA) { markerSA.remove(); markerSA = null; }
+    document.getElementById('lname-base').textContent = '—';
+    document.getElementById('lname-sa').textContent   = '—';
+    document.getElementById('search-a').value = '';
+  }
+
+  // Bマーカー・マップ更新
+  if (S.pointB) {
+    updateOverlayCenter();
+    if (markerSB) markerSB.remove();
+    markerSB = L.marker([S.pointB.lat, S.pointB.lng], {icon: iconB()}).addTo(mapSB);
+    mapSB.setView([S.pointB.lat, S.pointB.lng]);
+    document.getElementById('lname-overlay').textContent = trunc(S.pointB.name, 10);
+    document.getElementById('lname-sb').textContent      = trunc(S.pointB.name, 10);
+    document.getElementById('search-b').value = S.pointB.name || '';
+    minimapInst.setView([S.pointB.lat, S.pointB.lng], 8);
+  } else {
+    if (markerB)  { markerB.remove();  markerB  = null; }
+    if (markerSB) { markerSB.remove(); markerSB = null; }
+    document.getElementById('lname-overlay').textContent = '—';
+    document.getElementById('lname-sb').textContent      = '—';
+    document.getElementById('search-b').value = '';
+  }
+
+  persistState();
+  updateCoordUI();
+  updateStatus();
+  flashMsg('A ↔ B SWAPPED');
+}
+
+// ===== COORD UI =====
+function updateCoordUI() {
+  if (S.pointA) {
+    document.getElementById('ca-lat').textContent = S.pointA.lat.toFixed(6);
+    document.getElementById('ca-lng').textContent = S.pointA.lng.toFixed(6);
+    document.getElementById('ca-elev').textContent = S.pointA.elev != null ? S.pointA.elev+'m' : '—';
+  }
+  if (S.pointB) {
+    document.getElementById('cb-lat').textContent = S.pointB.lat.toFixed(6);
+    document.getElementById('cb-lng').textContent = S.pointB.lng.toFixed(6);
+    document.getElementById('cb-elev').textContent = S.pointB.elev != null ? S.pointB.elev+'m' : '—';
+  }
+}
+
+// ===== VIEW MODE =====
+function toggleViewMode() {
+  S.viewMode = S.viewMode === 'overlay' ? 'split' : 'overlay';
+  const btn = document.getElementById('view-toggle-btn');
+  const mapArea  = document.getElementById('map-area');
+  const splitArea = document.getElementById('split-area');
+  const lbase    = document.getElementById('label-base');
+  const loverlay = document.getElementById('label-overlay');
+  const miniWrap = document.getElementById('minimap-wrap');
+
+  if (S.viewMode === 'overlay') {
+    mapArea.style.display = '';
+    splitArea.style.display = 'none';
+    lbase.style.display = '';
+    loverlay.style.display = '';
+    miniWrap.style.display = '';
+    btn.textContent = '⇔ SPLIT VIEW';
+    setTimeout(() => { mapBase.invalidateSize(); mapOverlay.invalidateSize(); }, 50);
+  } else {
+    mapArea.style.display = 'none';
+    splitArea.style.display = '';
+    lbase.style.display = 'none';
+    loverlay.style.display = 'none';
+    miniWrap.style.display = 'none';
+    btn.textContent = '⊕ OVERLAY VIEW';
+    setTimeout(() => { mapSA.invalidateSize(); mapSB.invalidateSize(); }, 50);
+  }
+}
+
+// ===== OPACITY =====
+function updateOpacity() {
+  const v = document.getElementById('opacity-slider').value;
+  document.getElementById('opacity-val').textContent = v + '%';
+  S.overlayOpacity = v / 100;
+  // CSS opacity を #map-overlay-el コンテナに適用（Leafletのbg透過と組み合わせる）
+  document.getElementById('map-overlay-el').style.opacity = S.overlayOpacity;
+}
+
+// ===== VIZ MODE =====
+function setVizMode(mode, el) {
+  S.vizMode = mode;
+  document.querySelectorAll('.viz-thumb').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  applyVizFilter();
+}
+function applyVizFilter() {
+  const overlayEl = document.getElementById('map-overlay-el');
+  const sbEl = document.getElementById('map-sb');
+  // CSSフィルタ（relief は陰影起伏タイルを使うのでフィルタ不要）
+  const filters = {
+    standard: '',
+    mono:     'grayscale(1)',
+    hicon:    'grayscale(1) contrast(1.6) invert(1)',
+    relief:   '',
+  };
+  const f = filters[S.vizMode] !== undefined ? filters[S.vizMode] : '';
+  overlayEl.style.filter = f;
+  sbEl.style.filter = f;
+  // 陰影起伏モードはタイルソースを切替
+  const tileUrl = (S.vizMode === 'relief') ? TILES.relief : TILES.pale;
+  if (tileOverlay) tileOverlay.setUrl(tileUrl);
+  if (tileSB) tileSB.setUrl(tileUrl);
+}
+
+// ===== ROAD HIGHLIGHT =====
+function updateRoadHighlight() {
+  const mode = document.getElementById('road-highlight-mode').value;
+  // CSS hue-rotate trick on base tile for road emphasis
+  const tileEl = document.querySelector('#map-base .leaflet-tile-pane');
+  if (!tileEl) return;
+  const filters = { none:'', red:'hue-rotate(180deg) saturate(2)', blue:'hue-rotate(240deg) saturate(1.5)', green:'hue-rotate(120deg) saturate(1.5)' };
+  // apply to pane
+  [document.querySelector('#map-base .leaflet-tile-pane'), document.querySelector('#map-sa .leaflet-tile-pane')].forEach(p => {
+    if (p) p.style.filter = filters[mode] || '';
+  });
+}
+function selectChip(el, color) {
+  document.querySelectorAll('.color-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('road-highlight-mode').value = color;
+  updateRoadHighlight();
+}
+
+// ===== DISTORTION =====
+function mercatorScale(lat) { return 1 / Math.cos(lat * Math.PI / 180); }
+function getDF() {
+  if (!S.pointA || !S.pointB) return 1;
+  return mercatorScale(S.pointA.lat) / mercatorScale(S.pointB.lat);
+}
+
+function updateStatus() {
+  const zoom = S.viewMode === 'overlay' ? mapBase.getZoom() : mapSA.getZoom();
+  document.getElementById('ts-zoom').textContent = zoom.toFixed(1);
+
+  if (S.pointA) { document.getElementById('ts-lat-a').textContent = S.pointA.lat.toFixed(2)+'°'; document.getElementById('lg-lat-a').textContent = S.pointA.lat.toFixed(3)+'° N'; }
+  if (S.pointB) { document.getElementById('ts-lat-b').textContent = S.pointB.lat.toFixed(2)+'°'; document.getElementById('lg-lat-b').textContent = S.pointB.lat.toFixed(3)+'° N'; }
+
+  const df = getDF();
+  const pct = Math.round((1/df)*100);
+  document.getElementById('ts-distort').textContent = df.toFixed(3)+'×';
+  document.getElementById('dn-factor').textContent  = df.toFixed(2)+'×';
+  document.getElementById('dn-pct').textContent     = `/ ${pct}%`;
+  document.getElementById('lg-factor').textContent  = df.toFixed(3)+'×';
+
+  // gauge: df 0.5→2.0
+  const norm = Math.max(0, Math.min(1, (df - 0.5) / 1.5));
+  const fill = document.getElementById('gauge-fill');
+  fill.style.width = (norm * 100) + '%';
+  const dev = Math.abs(df - 1.0);
+  fill.style.background = dev < 0.05 ? 'var(--green)' : dev < 0.25 ? 'var(--amber)' : 'var(--red)';
+
+  const isLocked = dev < 0.05;
+  const badge = document.getElementById('dn-badge');
+  const dn = document.getElementById('dn-factor');
+  badge.className = 'distort-badge' + (isLocked ? ' visible' : '');
+  dn.className = 'distort-num' + (isLocked ? ' locked locked-anim' : '');
+  document.getElementById('ts-lock-wrap').style.display = isLocked ? '' : 'none';
+
+  // scale display
+  const mpp = (156543.03392 * Math.cos((S.viewMode==='overlay'?mapBase.getCenter().lat:mapSA.getCenter().lat) * Math.PI/180)) / Math.pow(2, zoom);
+  const s = Math.round(mpp * 96 / 0.0254);
+  document.getElementById('scale-display').textContent = s > 10000 ? `1:${Math.round(s/1000)}k` : `1:${s}`;
+}
+
+function applyCorrection() {
+  if (!S.pointA || !S.pointB) { flashMsg('地点A・Bを設定してください'); return; }
+  const df = getDF();
+  if (S.viewMode === 'overlay') {
+    S.correctionApplied = true;
+    syncOverlayToBase();
+  } else {
+    const zA = mapSA.getZoom();
+    mapSB.setZoom(zA + Math.log2(df));
+  }
+  setTimeout(updateStatus, 100);
+  flashMsg('補正適用 — CORRECTED');
+}
+
+function syncZoom() {
+  S.correctionApplied = false;
+  if (S.viewMode === 'overlay') syncOverlayToBase();
+  else mapSB.setZoom(mapSA.getZoom());
+  setTimeout(updateStatus, 100);
+  flashMsg('ZOOM SYNCED');
+}
+
+// ===== GEOCODER =====
+async function doSearch(which) {
+  const q = document.getElementById(`search-${which}`).value.trim();
+  if (!q) return;
+  try {
+    const res = await fetch(`https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    showResults(which, data);
+  } catch(e) { flashMsg('GEOCODE ERROR'); }
+}
+
+function showResults(which, results) {
+  const el = document.getElementById(`sres-${which}`);
+  el.innerHTML = '';
+  if (!results?.length) {
+    el.innerHTML = '<div class="result-item" style="color:var(--red)">結果なし</div>';
+    el.style.display = 'block';
+    setTimeout(() => el.style.display='none', 2000);
+    return;
+  }
+  results.slice(0,8).forEach(r => {
+    const c = r.geometry?.coordinates;
+    const name = r.properties?.title || '';
+    const item = document.createElement('div');
+    item.className = 'result-item';
+    item.textContent = name;
+    item.onclick = async () => {
+      el.style.display = 'none';
+      document.getElementById(`search-${which}`).value = name;
+      if (c) {
+        const elev = await fetchElev(c[1], c[0]);
+        setPoint(which, {lat:c[1], lng:c[0], name, elev});
+      }
+    };
+    el.appendChild(item);
+  });
+  el.style.display = 'block';
+}
+
+// ===== ELEVATION =====
+async function fetchElev(lat, lng) {
+  try {
+    const r = await fetch(`https://cyberjapandata2.gsi.go.jp/general/dem/scripts/getelevation.php?lon=${lng}&lat=${lat}&outtype=JSON`);
+    const d = await r.json();
+    return d.elevation ?? null;
+  } catch(e) { return null; }
+}
+
+// ===== PRESETS =====
+function getPresets() { const d=localStorage.getItem('geo_presets_v11'); return d?JSON.parse(d):Array(5).fill(null); }
+function savePresets(a) { localStorage.setItem('geo_presets_v11', JSON.stringify(a)); }
+
+function savePreset() {
+  const ps = getPresets();
+  let slot = ps.findIndex(p=>!p);
+  if (slot < 0) slot = 0;
+  ps[slot] = { nameA:S.pointA?.name||null, nameB:S.pointB?.name||null, pointA:S.pointA, pointB:S.pointB,
+               zoomA:(S.viewMode==='overlay'?mapBase:mapSA).getZoom() };
+  savePresets(ps); S.selectedPreset = slot; renderPresets();
+  flashMsg(`SLOT ${slot+1} SAVED`);
+}
+function loadPreset(i) {
+  const ps = getPresets();
+  const p = ps[i];
+  S.selectedPreset = i;
+  if (p) {
+    if (p.pointA) setPoint('a', p.pointA);
+    if (p.pointB) setPoint('b', p.pointB);
+    if (p.zoomA) { mapBase.setZoom(p.zoomA); mapSA.setZoom(p.zoomA); }
+  }
+  renderPresets();
+}
+function clearPreset() {
+  if (S.selectedPreset<0) return;
+  const ps = getPresets(); ps[S.selectedPreset]=null; savePresets(ps);
+  S.selectedPreset=-1; renderPresets(); flashMsg('SLOT CLEARED');
+}
+function renderPresets() {
+  const ps = getPresets();
+  const grid = document.getElementById('preset-grid');
+  grid.innerHTML = '';
+  ps.forEach((p,i) => {
+    const btn = document.createElement('button');
+    btn.className='preset-btn'+(p?' filled':'')+(i===S.selectedPreset?' selected':'');
+    btn.innerHTML = p
+      ? `<div>${i+1}</div><div class="preset-name">${p.nameA||'?'}</div><div class="preset-name" style="color:#6ad4ff">${p.nameB||'?'}</div>`
+      : `<div style="font-size:16px;color:#30363d">+</div>`;
+    btn.onclick = () => loadPreset(i);
+    grid.appendChild(btn);
+  });
+  document.getElementById('preset-slot-label').textContent = S.selectedPreset>=0 ? `SLOT ${S.selectedPreset+1}` : '—';
+}
+
+// ===== HOME =====
+function saveHome() {
+  localStorage.setItem('geo_home_v11', JSON.stringify({
+    pointA:S.pointA, pointB:S.pointB,
+    zoomA:mapBase.getZoom(), centerA:mapBase.getCenter(),
+    zoomSA:mapSA.getZoom(), centerSA:mapSA.getCenter(),
+    centerSB:mapSB.getCenter(), zoomSB:mapSB.getZoom(),
+  }));
+  flashMsg('HOME SAVED');
+}
+function loadHome() {
+  const d=localStorage.getItem('geo_home_v11'); if (!d) return;
+  const h=JSON.parse(d);
+  if (h.pointA) setPoint('a',h.pointA,false);
+  if (h.pointB) setPoint('b',h.pointB,false);
+  if (h.centerA) mapBase.setView([h.centerA.lat,h.centerA.lng], h.zoomA||12);
+  if (h.centerSA) mapSA.setView([h.centerSA.lat,h.centerSA.lng], h.zoomSA||12);
+  if (h.centerSB) mapSB.setView([h.centerSB.lat,h.centerSB.lng], h.zoomSB||12);
+  flashMsg('HOME RESTORED');
+}
+
+// ===== RESET DISPLAY =====
+function resetDisplayOnly() {
+  document.getElementById('opacity-slider').value = 60;
+  document.getElementById('opacity-val').textContent = '60%';
+  S.overlayOpacity = 0.6;
+  document.getElementById('map-overlay-el').style.opacity = 0.6;
+  document.getElementById('road-highlight-mode').value = 'none';
+  // 道路カラーチップも「なし」相当にリセット
+  document.querySelectorAll('.color-chip').forEach(c => c.classList.remove('active'));
+  updateRoadHighlight();
+  S.vizMode = 'standard';
+  document.querySelectorAll('.viz-thumb').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-mode="standard"]').classList.add('active');
+  applyVizFilter();
+  flashMsg('DISPLAY RESET');
+}
+
+// ===== ANALYSIS MODE =====
+function _setOpacityUI(pct) {
+  document.getElementById('opacity-slider').value = pct;
+  document.getElementById('opacity-val').textContent = pct + '%';
+  S.overlayOpacity = pct / 100;
+  document.getElementById('map-overlay-el').style.opacity = S.overlayOpacity;
+}
+function _resetAnalysisBase() {
+  // まず全設定を初期値に戻してから各プリセットを適用（累積を防ぐ）
+  _setOpacityUI(60);
+  document.getElementById('road-highlight-mode').value = 'none';
+  document.querySelectorAll('.color-chip').forEach(c => c.classList.remove('active'));
+  updateRoadHighlight();
+  S.vizMode = 'standard';
+  document.querySelectorAll('.viz-thumb').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-mode="standard"]').classList.add('active');
+  applyVizFilter();
+}
+function setAnalysisMode(el, mode) {
+  document.querySelectorAll('.analysis-row').forEach(r=>r.classList.remove('active'));
+  el.classList.add('active');
+  // まずリセット（モード切替で前設定が残らないように）
+  _resetAnalysisBase();
+  // モード別プリセット
+  if (mode === 'standard') {
+    // すでにリセット済み = 標準状態
+  } else if (mode === 'scale') {
+    _setOpacityUI(50);
+  } else if (mode === 'terrain') {
+    _setOpacityUI(70);
+    setVizMode('relief', document.querySelector('[data-mode="relief"]'));
+  } else if (mode === 'infra') {
+    document.getElementById('road-highlight-mode').value = 'red';
+    // 赤チップをアクティブに
+    document.querySelectorAll('.color-chip').forEach(c => c.classList.remove('active'));
+    const redChip = document.querySelector('.color-chip[onclick*="red"]');
+    if (redChip) redChip.classList.add('active');
+    updateRoadHighlight();
+  }
+  // custom は reset のみ
+  const label = el.querySelector('.ar-icon').textContent + ' ' + [...el.childNodes]
+    .filter(n=>n.nodeType===3).map(n=>n.textContent.trim()).join('');
+  flashMsg(label.trim() + ' — SET');
+}
+
+// ===== SECTION TOGGLE =====
+function toggleSection(titleEl) {
+  titleEl.classList.toggle('collapsed');
+  titleEl.nextElementSibling.classList.toggle('hidden');
+}
+
+// ===== SIDEBAR =====
+function setSidebarActive(id) {
+  document.querySelectorAll('.sb-btn').forEach(b=>b.classList.remove('active'));
+  const btn = document.getElementById('sb-'+id);
+  if (btn) btn.classList.add('active');
+}
+
+// ===== DRAWER =====
+// ===== DRAWER 開閉・ホバー・ピン =====
+let drawerHoverTimer = null;
+
+function openDrawer() {
+  const d = document.getElementById('drawer');
+  // CSSトランジションをキャンセルしてから位置を強制設定
+  d.getAnimations().forEach(a => a.cancel());
+  d.style.transition = 'none';
+  d.style.transform = 'translateX(0px)';
+  void d.offsetWidth; // force reflow
+  d.style.transition = '';
+  d.classList.add('open');
+  document.getElementById('rbezel').classList.add('open');
+  invalidateMaps();
+}
+
+function closeDrawer() {
+  const d = document.getElementById('drawer');
+  d.getAnimations().forEach(a => a.cancel());
+  d.style.transition = 'none';
+  const rbezelW = getComputedStyle(document.documentElement).getPropertyValue('--rbezel-w').trim();
+  const drawerW = getComputedStyle(document.documentElement).getPropertyValue('--drawer-w').trim();
+  d.style.transform = `translateX(calc(${drawerW} + ${rbezelW}))`;
+  void d.offsetWidth;
+  d.style.transition = '';
+  d.classList.remove('open');
+  document.getElementById('rbezel').classList.remove('open');
+  invalidateMaps();
+}
+
+function invalidateMaps() {
+  setTimeout(() => {
+    mapBase.invalidateSize(); mapOverlay.invalidateSize();
+    mapSA.invalidateSize(); mapSB.invalidateSize();
+    minimapInst.invalidateSize();
+  }, 320);
+}
+
+function toggleDrawer() {
+  const isOpen = document.getElementById('drawer').classList.contains('open');
+  if (isOpen) {
+    S.drawerPinned = false;
+    updatePinBtn();
+    closeDrawer();
+  } else {
+    openDrawer();
+  }
+}
+
+function toggleDrawerPin() {
+  S.drawerPinned = !S.drawerPinned;
+  updatePinBtn();
+  if (S.drawerPinned) openDrawer();
+}
+
+function updatePinBtn() {
+  const btn = document.getElementById('drawer-pin-btn');
+  if (S.drawerPinned) {
+    btn.textContent = '📌';
+    btn.title = '常時表示中（クリックで解除）';
+    btn.classList.add('pinned');
+  } else {
+    btn.textContent = '📍';
+    btn.title = '常時表示に固定';
+    btn.classList.remove('pinned');
+  }
+}
+
+// ===== FLASH =====
+let flashTimer;
+function flashMsg(msg) {
+  const el = document.getElementById('flash-msg');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+// ===== HELP MODAL =====
+function showHelp() {
+  document.getElementById('help-modal').classList.add('open');
+}
+function closeHelp() {
+  document.getElementById('help-modal').classList.remove('open');
+}
+// Esc キーでも閉じる
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeHelp();
+});
+
+// ===== INIT EVENTS =====
+document.addEventListener('DOMContentLoaded', () => {
+  // Enterキー検索
+  document.getElementById('search-a').addEventListener('keydown', e => { if(e.key==='Enter') doSearch('a'); });
+  document.getElementById('search-b').addEventListener('keydown', e => { if(e.key==='Enter') doSearch('b'); });
+
+  // rbezel ホバー → ドロワーを開く
+  // 閉じるのは rbezel 再クリック / X ボタン のみ（mouseleave による自動クローズなし）
+  document.getElementById('rbezel').addEventListener('mouseenter', () => {
+    openDrawer();
+  });
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('#sres-a') && !e.target.closest('#search-a')) document.getElementById('sres-a').style.display='none';
+  if (!e.target.closest('#sres-b') && !e.target.closest('#search-b')) document.getElementById('sres-b').style.display='none';
+});
+
+// ===== BOOT =====
+loadSavedState();
+initMaps();
+setInterval(updateStatus, 2000);
+</script>
+</body>
+</html>
