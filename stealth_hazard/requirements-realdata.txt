@@ -1,0 +1,4 @@
+numpy
+scipy
+pyproj
+matplotlib  # realdata.visualize / realdata.sensitivity_plot のみで使用
